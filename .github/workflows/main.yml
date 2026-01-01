@@ -1,66 +1,66 @@
-name: Build SingBox 1.12.14 Final Victory (Library Mode)
+name: Build SingBox 1.12.14 Match-Victory
 on: workflow_dispatch
 
 jobs:
   build:
-    # 🔴 核心修复：必须使用 macOS 15 镜像，支持 Xcode 16 (解决项目格式 70 报错)
+    # 🔴 关键修复：必须使用 macOS 15 以支持 Xcode 16 项目格式
     runs-on: macos-15
     steps:
+      # 1. 🟢 环境强行对齐 (根据二进制分析，回退到 Go 1.22)
       - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
           distribution: 'microsoft'
           java-version: '17'
-
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.23'
+          go-version: '1.22'
 
-      # 1. 🟢 纯净克隆：拉取 1.12.14 内核
+      # 2. 🟢 克隆 1.12.14 核心与 UI
       - name: Clone Sources
         run: |
-          git clone --recursive --depth 1 https://github.com/SagerNet/sing-box-for-apple.git ui-project
-          git clone --branch v1.12.14 --depth 1 https://github.com/SagerNet/sing-box.git core-project
+          git clone --recursive --depth 1 https://github.com/SagerNet/sing-box-for-apple.git ui-src
+          git clone --branch v1.12.14 --depth 1 https://github.com/SagerNet/sing-box.git core-src
 
-      # 2. 🔴 绝杀：按照提取样本的物理结构封装内核
-      - name: Build Core (Matched to Phone Sample)
+      # 3. 🔴 绝杀编译：按照提取样本封装 Library.framework
+      - name: Build Core (Library Mode)
         run: |
           go install github.com/sagernet/gomobile/cmd/gomobile@latest
           go install github.com/sagernet/gomobile/cmd/gobind@latest
           echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
           $(go env GOPATH)/bin/gomobile init
           
-          cd core-project
-          # 🟢 运行 1.12.x 官方原生编译逻辑
+          cd core-src
+          # 编译 1.12.14 核心逻辑
           go run ./cmd/apple framework -v
           
-          # 🔴 关键对位：将生成的零件强制改名为你提取出来的 Library.xcframework
-          ORIGINAL_NAME=$(find . -name "*.xcframework" | head -n 1)
-          cp -rf "$ORIGINAL_NAME" ../ui-project/Library.xcframework
+          # 🔴 核心修复：按照你提取的文件名，强制命名为 Library.xcframework
+          ORIGINAL_FRAMEWORK=$(find . -name "*.xcframework" | head -n 1)
+          cp -rf "$ORIGINAL_FRAMEWORK" ../ui-src/Library.xcframework
           
           # 🟢 同时兼容 UI 项目中所有可能的旧路径
-          mkdir -p ../ui-project/Library/sing-box
-          cp -rf "$ORIGINAL_NAME" ../ui-project/Library/sing-box/
-          cp -rf "$ORIGINAL_NAME" ../ui-project/Libbox.xcframework
+          mkdir -p ../ui-src/Library/sing-box
+          cp -rf "$ORIGINAL_FRAMEWORK" ../ui-src/Library/sing-box/
+          cp -rf "$ORIGINAL_FRAMEWORK" ../ui-src/Libbox.xcframework
 
-      # 3. 🔴 绝杀：手术级修改工程文件，彻底消除 Code 65
+      # 4. 🔴 绝杀：手术级修改工程，彻底消除 Code 65 来源
       - name: Hard-Purge Extensions
         run: |
-          cd ui-project
-          # 物理删除
+          cd ui-src
+          # 1. 物理移除插件文件夹
           rm -rf Extension IntentsExtension WidgetExtension TVExtension FileProviderExtension Shared
           
-          # 暴力修剪：从工程文件中删除所有 Extension 的编译配置
+          # 2. 暴力修改项目配置，移除所有 Extension 的编译目标
+          # 这是确保 Xcode 不会因为找不到证书而报错 65 的关键步骤
           sed -i '' '/Extension/d' sing-box.xcodeproj/project.pbxproj
           
-          # 预解析依赖
           xcodebuild -resolvePackageDependencies
 
-      # 4. 🟢 Xcode 最终合成 (按照提取文件的 SFI 方案)
+      # 5. 🟢 Xcode 最终合成 (无签名模式)
       - name: Xcode Synthesis
         run: |
-          cd ui-project
+          cd ui-src
           xcodebuild -project sing-box.xcodeproj \
                      -scheme SFI \
                      -configuration Release \
@@ -72,15 +72,15 @@ jobs:
                      GCC_PREPROCESSOR_DEFINITIONS='$GCC_PREPROCESSOR_DEFINITIONS SFI_MAIN_ONLY=1' \
                      clean archive -archivePath build/sing-box.xcarchive
 
-      # 5. 🟢 打包 IPA (TrollStore 专用)
+      # 6. 🟢 产出成品 IPA
       - name: Export IPA
         run: |
           mkdir -p Payload
-          APP_PATH=$(find ui-project/build/sing-box.xcarchive -name "*.app" | head -n 1)
+          APP_PATH=$(find ui-src/build/sing-box.xcarchive -name "*.app" | head -n 1)
           cp -rp "$APP_PATH" Payload/
           zip -r sing-box-1.12.14-victory.ipa Payload/
 
-      - name: Upload
+      - name: Upload Result
         uses: actions/upload-artifact@v4
         with:
           name: SingBox-Match-Result

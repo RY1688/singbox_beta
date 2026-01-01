@@ -1,12 +1,12 @@
-name: Build SingBox Latest-Ultimate
+name: Build SingBox 1.12.14 Victory (Final Pass)
 on: workflow_dispatch
 
 jobs:
   build:
-    # 🔴 核心修复 1：必须使用 macOS 15 以支持最新 Xcode 工程格式
+    # 🔴 关键修复 1：使用 macOS 15 以支持最新的项目格式
     runs-on: macos-15
     steps:
-      # 1. 🟢 环境强行锁死
+      # 1. 🟢 环境锁死 (OpenJDK 17 必选)
       - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
@@ -17,39 +17,42 @@ jobs:
         with:
           go-version: '1.23'
 
-      # 2. 🟢 纯净克隆：获取最新全套源码
+      # 2. 🟢 纯净下载：隔离 UI 与 1.12.14 核心
       - name: Clone Sources
         run: |
           git clone --recursive --depth 1 https://github.com/SagerNet/sing-box-for-apple.git ui-src
-          git clone --depth 1 https://github.com/SagerNet/sing-box.git core-src
+          git clone --branch v1.12.14 --depth 1 https://github.com/SagerNet/sing-box.git core-src
 
-      # 3. 🔴 绝杀：按照最新版路径直接构建核心零件
-      - name: Build Latest Core
+      # 3. 🔴 绝杀：手动磨制零件并“强行改名”对位
+      - name: Build Core Framework
         run: |
           go install github.com/sagernet/gomobile/cmd/gomobile@latest
           go install github.com/sagernet/gomobile/cmd/gobind@latest
           echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
           $(go env GOPATH)/bin/gomobile init
           
+          # 进入内核源码根目录，直接执行官方原生构建
           cd core-src
-          # 🟢 最新版 100% 存在此路径，直接调用官方 Apple 构建脚本
-          go run ./cmd/apple framework -v
+          gomobile bind -v -target ios ./
           
-          # 🔴 关键：重命名零件以同时满足新旧 UI 的不同期待
-          cp -rf *.xcframework ../ui-src/Libbox.xcframework
+          # 🔴 关键修复 2：强行改名为新版 UI 期待的 Libbox 名称
+          ORIGINAL_FRAMEWORK=$(find . -name "*.xcframework" | head -n 1)
+          cp -rf "$ORIGINAL_FRAMEWORK" ../ui-src/Libbox.xcframework
+          
+          # 物理隔离同步到 Library 下
           mkdir -p ../ui-src/Library/sing-box
-          cp -rf *.xcframework ../ui-src/Library/sing-box/
+          cp -rf "$ORIGINAL_FRAMEWORK" ../ui-src/Library/sing-box/
 
-      # 4. 🔴 物理隔离：彻底删除会导致 Exit code 65 的组件
+      # 4. 🔴 暴力剥离：清除所有会导致 Exit code 65 的签名组件
       - name: Purge Disruptive Extensions
         run: |
           cd ui-src
-          # 强行移除云端无证书环境下无法编译的所有插件
+          # 彻底移除所有在无证书环境下无法编译的非核心插件
           rm -rf Extension IntentsExtension WidgetExtension TVExtension FileProviderExtension Shared
           # 强制预解析 Swift 依赖包
           xcodebuild -resolvePackageDependencies
 
-      # 5. 🟢 Xcode 最终合成 (无签名纯净模式)
+      # 5. 🟢 最终合成 IPA (纯净核心模式)
       - name: Xcode Synthesis
         run: |
           cd ui-src
@@ -64,16 +67,16 @@ jobs:
                      GCC_PREPROCESSOR_DEFINITIONS='$GCC_PREPROCESSOR_DEFINITIONS SFI_MAIN_ONLY=1' \
                      clean archive -archivePath build/sing-box.xcarchive
 
-      # 6. 🟢 产出 IPA
+      # 6. 🟢 打包 IPA
       - name: Export for TrollStore
         run: |
           mkdir -p Payload
           APP_PATH=$(find ui-src/build/sing-box.xcarchive -name "*.app" | head -n 1)
           cp -rp "$APP_PATH" Payload/
-          zip -r sing-box-latest-victory.ipa Payload/
+          zip -r sing-box-1.12.14-victory.ipa Payload/
 
-      - name: Upload
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: SingBox-Latest-IPA
-          path: sing-box-latest-victory.ipa
+          name: SingBox-Result
+          path: sing-box-1.12.14-victory.ipa

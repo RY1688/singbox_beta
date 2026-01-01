@@ -3,10 +3,9 @@ on: workflow_dispatch
 
 jobs:
   build:
-    # 🔴 核心修复 1：使用 macOS 15 以支持 Xcode 16 项目格式
+    # 🔴 使用 macos-15 以确保环境最新
     runs-on: macos-15
     steps:
-      # 1. 🟢 环境强制对位
       - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
@@ -17,14 +16,15 @@ jobs:
         with:
           go-version: '1.23'
 
-      # 2. 🟢 完整递归克隆 (包含所有 Swift 依赖)
-      - name: Clone Clean Source
+      # 🟢 核心修复：UI 和 内核全部锁定到 1.12.14 发布时的状态，防止最新代码的签名坑
+      - name: Clone Version-Matched Source
         run: |
-          git clone --recursive https://github.com/SagerNet/sing-box-for-apple.git ui-project
+          # 克隆 1.12.14 版本对应的 UI 源码
+          git clone --branch v1.12.14 --recursive --depth 1 https://github.com/SagerNet/sing-box-for-apple.git ui-project
+          # 克隆 1.12.14 内核源码
           git clone --branch v1.12.14 --depth 1 https://github.com/SagerNet/sing-box.git core-project
 
-      # 3. 🟢 编译内核零件 (1.12.14 稳定版)
-      - name: Build Core Framework
+      - name: Build 1.12.14 Core
         run: |
           go install github.com/sagernet/gomobile/cmd/gomobile@latest
           go install github.com/sagernet/gomobile/cmd/gobind@latest
@@ -32,27 +32,25 @@ jobs:
           $(go env GOPATH)/bin/gomobile init
           
           cd core-project
-          # 直接对根模块进行 bind 操作
+          # 现场磨制零件
           gomobile bind -v -target ios ./
           
-          # 🔴 核心修复 2：根据报错日志，强行更名为 Xcode 期待的 Libbox.xcframework
-          ORIGINAL_FRAMEWORK=$(find . -name "*.xcframework" | head -n 1)
-          cp -rf "$ORIGINAL_FRAMEWORK" ../ui-project/Libbox.xcframework
+          # 根据不同版本 UI 的需求，同时生成两个名称的零件以防万一
+          mkdir -p ../ui-project/Library/sing-box
+          cp -rf *.xcframework ../ui-project/Library/sing-box/
+          cp -rf *.xcframework ../ui-project/Libbox.xcframework
 
-      # 4. 🔴 核心修复 3：手术级剥离干扰组件 (彻底解决 Exit code 65)
-      - name: Purge Disruptive Extensions
+      - name: Clean Xcode Projects
         run: |
           cd ui-project
-          # 强行移除所有会导致签名报错的“累赘”插件
+          # 彻底移除所有需要证书权限的非核心扩展
           rm -rf Extension IntentsExtension WidgetExtension TVExtension FileProviderExtension Shared
-          # 预解析 Swift 包依赖
           xcodebuild -resolvePackageDependencies
 
-      # 5. 🟢 Xcode 最终合成 (无签名模式)
-      - name: Xcode Synthesis
+      - name: Final Xcode Synthesis
         run: |
           cd ui-project
-          # 使用纯净模式编译 SFI 主方案
+          # 使用最纯净的 SFI 方案编译
           xcodebuild -project sing-box.xcodeproj \
                      -scheme SFI \
                      -configuration Release \
@@ -64,8 +62,7 @@ jobs:
                      GCC_PREPROCESSOR_DEFINITIONS='$GCC_PREPROCESSOR_DEFINITIONS SFI_MAIN_ONLY=1' \
                      clean archive -archivePath build/sing-box.xcarchive
 
-      # 6. 🟢 产出成品 IPA
-      - name: Export Result
+      - name: Export IPA
         run: |
           mkdir -p Payload
           APP_PATH=$(find ui-project/build/sing-box.xcarchive -name "*.app" | head -n 1)

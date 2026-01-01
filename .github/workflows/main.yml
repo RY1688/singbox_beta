@@ -1,12 +1,12 @@
-name: Build SingBox 1.12.14 Final Victory
+name: Build SingBox 1.12.14 Victory (Full Dependencies)
 on: workflow_dispatch
 
 jobs:
   build:
-    # 🔴 关键修复：升级到 macOS 15 镜像，支持 Xcode 16 (解决报错 70)
+    # 🔴 关键修复 1：必须使用 macOS 15 以支持最新的 Xcode 16 项目格式
     runs-on: macos-15
     steps:
-      # 1. 🟢 强行对位 Java 17 (解决 gomobile 命门)
+      # 1. 🟢 强行对位 Java 17 (解决 gomobile 报错)
       - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
@@ -18,13 +18,13 @@ jobs:
         with:
           go-version: '1.23'
 
-      # 2. 🟢 纯净克隆：获取 1.12.14 稳定版源码
+      # 2. 🟢 核心修复 2：递归克隆 UI 项目，确保下载所有 Swift 依赖子模块
       - name: Clone Clean Source
         run: |
-          git clone https://github.com/SagerNet/sing-box-for-apple.git ui-project
+          git clone --recursive https://github.com/SagerNet/sing-box-for-apple.git ui-project
           git clone --branch v1.12.14 --depth 1 https://github.com/SagerNet/sing-box.git core-project
 
-      # 3. 🟢 模块化编译内核 (此时编译器环境已经全线通车)
+      # 3. 🟢 编译内核零件 (1.12.14 稳定版)
       - name: Build Core Framework
         run: |
           go install github.com/sagernet/gomobile/cmd/gomobile@latest
@@ -33,20 +33,24 @@ jobs:
           $(go env GOPATH)/bin/gomobile init
           
           cd core-project
-          # 🔴 直接 bind 根模块，生成 1.12.14 稳定版核心零件
+          # 直接对根模块进行 bind，生成最新的 1.12.14 稳定版零件
           gomobile bind -v -target ios ./
           
-          # 搬运生成的 xcframework 到 UI 项目
+          # 搬运零件到 UI 项目
           mkdir -p $GITHUB_WORKSPACE/ui-project/Library/sing-box
           cp -rf *.xcframework $GITHUB_WORKSPACE/ui-project/Library/sing-box/
 
-      # 4. 🟢 Xcode 16 最终合成 (现在可以正常读取项目文件了)
+      # 4. 🟢 Xcode 16 最终合成 (处理依赖并编译)
       - name: Xcode Synthesis
         run: |
           cd ui-project
           # 彻底清除干扰项
           rm -rf Extension IntentsExtension WidgetExtension TVExtension
           
+          # 🔴 关键修复 3：强制 Xcode 预先解析并下载所有 Swift Package 依赖
+          xcodebuild -resolvePackageDependencies
+          
+          # 执行最终编译
           xcodebuild -project sing-box.xcodeproj \
                      -scheme SFI \
                      -configuration Release \
@@ -64,7 +68,7 @@ jobs:
           cp -rp "$APP_PATH" Payload/
           zip -r sing-box-1.12.14-stable.ipa Payload/
 
-      - name: Upload Result
+      - name: Upload Finished IPA
         uses: actions/upload-artifact@v4
         with:
           name: SingBox-Result

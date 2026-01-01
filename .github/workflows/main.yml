@@ -1,10 +1,11 @@
-name: Build SingBox 1.12.14 Victory-Final
+name: Build SingBox 1.12.14 FINAL-VICTORY
 on: workflow_dispatch
 
 jobs:
   build:
     runs-on: macos-15
     steps:
+      # 1. 🟢 环境锁死 (基于二进制指纹的 Go 1.22)
       - name: Setup Environment
         uses: actions/setup-java@v4
         with:
@@ -15,14 +16,14 @@ jobs:
         with:
           go-version: '1.22'
 
-      # 1. 🟢 镜像对位克隆
+      # 2. 🟢 克隆 1.12.14 核心与 UI
       - name: Clone Sources
         run: |
           git clone --recursive --depth 1 https://github.com/SagerNet/sing-box-for-apple.git ui-src
           git clone --branch v1.12.14 --depth 1 https://github.com/SagerNet/sing-box.git core-src
 
-      # 2. 🟢 按照手机样本编译 Library (静态链接对位)
-      - name: Build Core (Library Match)
+      # 3. 🔴 绝杀编译：强制封装为 Library.xcframework (对位你提供的 Library 二进制)
+      - name: Build Core (Library Mode)
         run: |
           go install github.com/sagernet/gomobile/cmd/gomobile@latest
           go install github.com/sagernet/gomobile/cmd/gobind@latest
@@ -30,34 +31,37 @@ jobs:
           $(go env GOPATH)/bin/gomobile init
           
           cd core-src
-          # 🔴 核心对位：按照你提供的二进制指纹，执行 Library 模式编译
-          gomobile bind -v -target ios -o Library.xcframework ./
+          # 编译 1.12.14 核心
+          go run ./cmd/apple framework -v
           
-          # 🔴 强制物理对位：确保零件出现在 Xcode 期待的所有位置
-          cp -rf Library.xcframework ../ui-src/
+          # 🔴 核心对位：按照你提供的二进制名，强制改名
+          ORIGINAL_FRAMEWORK=$(find . -name "*.xcframework" | head -n 1)
+          cp -rf "$ORIGINAL_FRAMEWORK" ../ui-src/Library.xcframework
+          
+          # 物理同步到所有可能被引用到的路径，包括 Libbox
           mkdir -p ../ui-src/Library/sing-box
-          cp -rf Library.xcframework ../ui-src/Library/sing-box/
-          cp -rf Library.xcframework ../ui-src/Libbox.xcframework
+          cp -rf "$ORIGINAL_FRAMEWORK" ../ui-src/Library/sing-box/
+          cp -rf "$ORIGINAL_FRAMEWORK" ../ui-src/Libbox.xcframework
 
-      # 3. 🔴 绝杀：暴力修改 project.pbxproj 抹除所有插件 Target
-      - name: Hard-Fix Project
+      # 4. 🔴 绝杀：手术级修改项目工程，彻底抹除 Code 65 来源
+      - name: Hard-Purge & Re-Link
         run: |
           cd ui-src
-          # 物理删除
+          # 物理删除插件
           rm -rf Extension IntentsExtension WidgetExtension TVExtension FileProviderExtension Shared
           
-          # 🔴 核心修复：直接从工程定义中抹除所有包含 Extension 的行，让 Xcode 彻底“失忆”
+          # 🔴 核心修复：强制从项目配置文件中抹除所有 'Extension' 关键字的引用行
+          # 只有这样，Xcode 才会彻底“失忆”，不再去寻找证书
           sed -i '' '/Extension/d' sing-box.xcodeproj/project.pbxproj
           sed -i '' '/Widget/d' sing-box.xcodeproj/project.pbxproj
           
-          # 强制更新 Swift 依赖包
           xcodebuild -resolvePackageDependencies
 
-      # 4. 🟢 Xcode 最终合成 (无签名/核心模式)
+      # 5. 🟢 Xcode 最终合成 (无签名/核心模式)
       - name: Xcode Synthesis
         run: |
           cd ui-src
-          # 🔴 关键：使用 -allowProvisioningUpdates 之外的纯净模式
+          # 按照官方成功流时间线，锁定单主程序方案
           xcodebuild -project sing-box.xcodeproj \
                      -scheme SFI \
                      -configuration Release \
@@ -66,21 +70,19 @@ jobs:
                      CODE_SIGNING_REQUIRED=NO \
                      CODE_SIGN_IDENTITY="" \
                      CODE_SIGN_ENTITLEMENTS="" \
-                     AD_HOC_CODE_SIGNING_ALLOWED=YES \
                      GCC_PREPROCESSOR_DEFINITIONS='$GCC_PREPROCESSOR_DEFINITIONS SFI_MAIN_ONLY=1' \
                      clean archive -archivePath build/sing-box.xcarchive
 
-      # 5. 🟢 产出 IPA (TrollStore 专用封装)
-      - name: Export Final IPA
+      # 6. 🟢 产出成品 IPA (TrollStore 专用)
+      - name: Export Final Result
         run: |
           mkdir -p Payload
-          # 寻找编译好的主程序 .app 文件
           APP_PATH=$(find ui-src/build/sing-box.xcarchive -name "*.app" | head -n 1)
           cp -rp "$APP_PATH" Payload/
           zip -r sing-box-1.12.14-victory.ipa Payload/
 
-      - name: Upload Artifact
+      - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: SingBox-Match-Result
+          name: SingBox-Result
           path: sing-box-1.12.14-victory.ipa

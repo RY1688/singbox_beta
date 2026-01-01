@@ -1,11 +1,11 @@
-name: Build SingBox 1.12.14 (Final Victory)
+name: Build SingBox 1.12.14 Victory-Final
 on: workflow_dispatch
 
 jobs:
   build:
     runs-on: macos-14
     steps:
-      # 1. 🟢 修复环境：强制 OpenJDK 17 (解决之前截图看到的 FATAL 报错)
+      # 1. 🟢 环境强行对位 (Java 17 是满足 gomobile 的唯一条件)
       - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
@@ -16,14 +16,16 @@ jobs:
         with:
           go-version: '1.23'
 
-      # 2. 🟢 干净拉取全套源码
+      # 2. 🟢 源码强行对位 (手动指定目录，防止文件夹嵌套)
       - name: Clone Clean Source
         run: |
+          # 克隆主 App UI
           git clone https://github.com/SagerNet/sing-box-for-apple.git main-app
-          git clone --branch v1.12.14 --depth 1 https://github.com/SagerNet/sing-box.git core-src
+          # 克隆内核源码到指定文件夹，不使用默认名
+          git clone --branch v1.12.14 --depth 1 https://github.com/SagerNet/sing-box.git singbox-core
 
-      # 3. 🔴 核心修复：全盘搜索编译入口 (解决 directory not found)
-      - name: Build Core (Auto-Locate Logic)
+      # 3. 🔴 核心对冲：解决路径缺失与模块报错
+      - name: Build Core Framework
         run: |
           # 安装编译工具
           go install github.com/sagernet/gomobile/cmd/gomobile@latest
@@ -31,33 +33,24 @@ jobs:
           echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
           $(go env GOPATH)/bin/gomobile init
           
-          # 🟢 关键：不再猜测路径，直接在克隆的所有内容中寻找 cmd/apple 文件夹
-          REAL_CORE_DIR=$(find $(pwd)/core-src -name "apple" -type d | grep "cmd/apple" | head -n 1)
+          # 🟢 修正点 1：进入包含 go.mod 的根目录确保模块上下文正确
+          cd singbox-core
           
-          if [ -z "$REAL_CORE_DIR" ]; then
-            echo "Error: Could not find cmd/apple in the source tree."
-            ls -R core-src # 打印目录结构用于调试
-            exit 1
-          fi
+          # 🟢 修正点 2：使用绝对包路径运行编译脚本，彻底避开 "not a main package"
+          go run ./cmd/apple framework -v
           
-          echo "Found entry point at: $REAL_CORE_DIR"
-          cd "$REAL_CORE_DIR"
-          
-          # 现场编译 1.12.14 二进制零件
-          go run . framework -v
-          
-          # 搬运生成的成果
-          cd $GITHUB_WORKSPACE
-          mkdir -p main-app/Library/sing-box
-          find core-src -name "*.xcframework" -exec cp -rf {} main-app/Library/sing-box/ \;
+          # 🟢 修正点 3：搬运成果到 UI 项目
+          mkdir -p ../main-app/Library/sing-box
+          cp -rf *.xcframework ../main-app/Library/sing-box/
 
-      # 4. 🟢 最终合成 (替代有问题的脚本逻辑，直接使用标准 Xcode 构建)
-      - name: Final Xcode Synthesis
+      # 4. 🟢 最终 Xcode 合成
+      - name: Xcode Final Synthesis
         run: |
           cd main-app
-          # 移除干扰项确保纯净编译
+          # 彻底清除干扰项
           rm -rf Extension IntentsExtension WidgetExtension TVExtension
           
+          # 强制编译 IPA
           xcodebuild -project sing-box.xcodeproj \
                      -scheme SFI \
                      -configuration Release \
@@ -67,7 +60,8 @@ jobs:
                      FRAMEWORK_SEARCH_PATHS="$(pwd)/Library/sing-box" \
                      clean archive -archivePath build/sing-box.xcarchive
 
-      - name: Pack IPA
+      # 5. 🟢 打包产出
+      - name: Export IPA
         run: |
           mkdir -p Payload
           APP_PATH=$(find main-app/build/sing-box.xcarchive -name "*.app" | head -n 1)
@@ -77,5 +71,5 @@ jobs:
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: SingBox-Result
+          name: SingBox-1.12.14-Success
           path: sing-box-1.12.14-stable.ipa

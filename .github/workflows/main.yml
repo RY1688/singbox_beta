@@ -5,6 +5,7 @@ jobs:
   build:
     runs-on: macos-15
     steps:
+      # 1. 🟢 环境锁死 (基于二进制指纹的 Go 1.22)
       - name: Setup Environment
         uses: actions/setup-java@v4
         with:
@@ -15,13 +16,13 @@ jobs:
         with:
           go-version: '1.22'
 
-      # 1. 🟢 克隆 1.12.14 核心与 UI
+      # 2. 🟢 克隆 1.12.14 核心与 UI
       - name: Clone Sources
         run: |
           git clone --recursive --depth 1 https://github.com/SagerNet/sing-box-for-apple.git ui-src
           git clone --branch v1.12.14 --depth 1 https://github.com/SagerNet/sing-box.git core-src
 
-      # 2. 🔴 绝杀编译：强制按照手机样本封装 Library.xcframework
+      # 3. 🔴 绝杀编译：按照手机样本强制封装为 Library.xcframework
       - name: Build Core (Library Mode)
         run: |
           go install github.com/sagernet/gomobile/cmd/gomobile@latest
@@ -30,19 +31,19 @@ jobs:
           $(go env GOPATH)/bin/gomobile init
           
           cd core-src
-          # 执行 1.12.x 原生编译
+          # 编译 1.12.14 核心逻辑
           go run ./cmd/apple framework -v
           
-          # 🔴 核心对位：按照你提供的二进制名，强制改名为 Library
+          # 🔴 核心对位：按照你提取的文件名，强制改名
           ORIGINAL_FRAMEWORK=$(find . -name "*.xcframework" | head -n 1)
           cp -rf "$ORIGINAL_FRAMEWORK" ../ui-src/Library.xcframework
           
-          # 同时兼容 UI 项目中所有可能的旧路径
+          # 物理同步到所有可能被引用到的路径，确保 Xcode 链接器不论怎么走都能找到零件
           mkdir -p ../ui-src/Library/sing-box
           cp -rf "$ORIGINAL_FRAMEWORK" ../ui-src/Library/sing-box/
           cp -rf "$ORIGINAL_FRAMEWORK" ../ui-src/Libbox.xcframework
 
-      # 3. 🔴 绝杀：手术级修改项目工程，彻底抹除 Code 65 来源
+      # 4. 🔴 绝杀：手术级修改工程，彻底抹除 Code 65 来源
       - name: Hard-Purge Extensions & Entitlements
         run: |
           cd ui-src
@@ -50,16 +51,16 @@ jobs:
           rm -rf Extension IntentsExtension WidgetExtension TVExtension FileProviderExtension Shared
           
           # 2. 暴力修改项目配置，移除所有 Extension 的编译目标引用
-          # 只有这样，Xcode 才会彻底“失忆”，不再去寻找证书
+          # 只有这样，Xcode 才会彻底“失忆”，不再去寻找签名信息
           sed -i '' '/Extension/d' sing-box.xcodeproj/project.pbxproj
           sed -i '' '/Widget/d' sing-box.xcodeproj/project.pbxproj
           
-          # 3. 彻底抹除主程序的权限文件内容，避免签名检查
+          # 3. 清理主程序权限文件，防止因包含高级 Capability 而报签名错
           find . -name "*.entitlements" -exec cp /dev/null {} \;
           
           xcodebuild -resolvePackageDependencies
 
-      # 4. 🟢 Xcode 最终合成 (无签名/核心模式)
+      # 5. 🟢 Xcode 最终合成 (无签名/核心模式)
       - name: Xcode Synthesis
         run: |
           cd ui-src
@@ -74,7 +75,7 @@ jobs:
                      GCC_PREPROCESSOR_DEFINITIONS='$GCC_PREPROCESSOR_DEFINITIONS SFI_MAIN_ONLY=1' \
                      clean archive -archivePath build/sing-box.xcarchive
 
-      # 5. 🟢 产出成品 IPA (TrollStore 专用)
+      # 6. 🟢 产出成品 IPA (TrollStore 专用)
       - name: Export Final Result
         run: |
           mkdir -p Payload

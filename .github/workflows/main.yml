@@ -1,13 +1,11 @@
-name: Build SingBox 1.12.14 Match-Victory
+name: Build SingBox 1.12.14 Final Victory (Library Mode)
 on: workflow_dispatch
 
 jobs:
   build:
-    # 🔴 关键修复：必须使用 macOS 15 以支持 Xcode 16 项目格式
     runs-on: macos-15
     steps:
-      # 1. 🟢 环境强行对齐 (根据二进制分析，回退到 Go 1.22)
-      - name: Setup Java 17
+      - name: Setup Environment
         uses: actions/setup-java@v4
         with:
           distribution: 'microsoft'
@@ -17,13 +15,13 @@ jobs:
         with:
           go-version: '1.22'
 
-      # 2. 🟢 克隆 1.12.14 核心与 UI
+      # 1. 🟢 克隆 1.12.14 核心与 UI
       - name: Clone Sources
         run: |
           git clone --recursive --depth 1 https://github.com/SagerNet/sing-box-for-apple.git ui-src
           git clone --branch v1.12.14 --depth 1 https://github.com/SagerNet/sing-box.git core-src
 
-      # 3. 🔴 绝杀编译：按照提取样本封装 Library.framework
+      # 2. 🟢 编译内核并按照你手机里的名称“Library”命名
       - name: Build Core (Library Mode)
         run: |
           go install github.com/sagernet/gomobile/cmd/gomobile@latest
@@ -35,32 +33,37 @@ jobs:
           # 编译 1.12.14 核心逻辑
           go run ./cmd/apple framework -v
           
-          # 🔴 核心修复：按照你提取的文件名，强制命名为 Library.xcframework
+          # 🔴 核心修复：强行命名为 Library.xcframework 以对位你提供的 Library 二进制
           ORIGINAL_FRAMEWORK=$(find . -name "*.xcframework" | head -n 1)
           cp -rf "$ORIGINAL_FRAMEWORK" ../ui-src/Library.xcframework
           
-          # 🟢 同时兼容 UI 项目中所有可能的旧路径
+          # 物理同步到所有可能被引用到的路径
           mkdir -p ../ui-src/Library/sing-box
           cp -rf "$ORIGINAL_FRAMEWORK" ../ui-src/Library/sing-box/
           cp -rf "$ORIGINAL_FRAMEWORK" ../ui-src/Libbox.xcframework
 
-      # 4. 🔴 绝杀：手术级修改工程，彻底消除 Code 65 来源
-      - name: Hard-Purge Extensions
+      # 3. 🔴 绝杀：手术级修改项目工程，彻底根除 Code 65
+      - name: Hard-Purge & Re-Link
         run: |
           cd ui-src
-          # 1. 物理移除插件文件夹
+          # 1. 物理删除所有会导致签名报错的插件文件夹
           rm -rf Extension IntentsExtension WidgetExtension TVExtension FileProviderExtension Shared
           
-          # 2. 暴力修改项目配置，移除所有 Extension 的编译目标
-          # 这是确保 Xcode 不会因为找不到证书而报错 65 的关键步骤
-          sed -i '' '/Extension/d' sing-box.xcodeproj/project.pbxproj
+          # 2. 强制抹除工程文件中关于这些插件的所有引用和编译目标
+          # 使用更彻底的正则表达式匹配删除
+          sed -i '' '/"Extension"/d' sing-box.xcodeproj/project.pbxproj
+          sed -i '' '/"Widget"/d' sing-box.xcodeproj/project.pbxproj
+          sed -i '' '/"Intents"/d' sing-box.xcodeproj/project.pbxproj
+          sed -i '' '/"FileProvider"/d' sing-box.xcodeproj/project.pbxproj
           
+          # 3. 解析依赖
           xcodebuild -resolvePackageDependencies
 
-      # 5. 🟢 Xcode 最终合成 (无签名模式)
+      # 4. 🟢 最终合成 (无签名/纯净核心模式)
       - name: Xcode Synthesis
         run: |
           cd ui-src
+          # 按照官方成功流逻辑，锁定单主程序方案
           xcodebuild -project sing-box.xcodeproj \
                      -scheme SFI \
                      -configuration Release \
@@ -72,15 +75,15 @@ jobs:
                      GCC_PREPROCESSOR_DEFINITIONS='$GCC_PREPROCESSOR_DEFINITIONS SFI_MAIN_ONLY=1' \
                      clean archive -archivePath build/sing-box.xcarchive
 
-      # 6. 🟢 产出成品 IPA
-      - name: Export IPA
+      # 5. 🟢 产出 IPA (TrollStore 专用)
+      - name: Export Final Result
         run: |
           mkdir -p Payload
           APP_PATH=$(find ui-src/build/sing-box.xcarchive -name "*.app" | head -n 1)
           cp -rp "$APP_PATH" Payload/
           zip -r sing-box-1.12.14-victory.ipa Payload/
 
-      - name: Upload Result
+      - name: Upload Finished Result
         uses: actions/upload-artifact@v4
         with:
           name: SingBox-Match-Result

@@ -5,30 +5,30 @@ jobs:
   build:
     runs-on: macos-14
     steps:
-      # 1. 🟢 Force Java 17 Alignment (Fixes the FATAL crash)
+      # 1. 🟢 强行对位 Java 17 (彻底杀掉 FATAL 报错)
       - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
           distribution: 'microsoft'
           java-version: '17'
 
-      # 2. 🟢 Setup Go with Cache
+      # 2. 🟢 配置 Go 环境并开启缓存
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
           go-version: '1.23'
           cache: true
 
-      # 3. 🟢 Clean Physical Path Mapping (Prevent directory nesting)
+      # 3. 🟢 源码强制物理对位 (手动创建隔离文件夹)
       - name: Clone Clean Source
         run: |
           mkdir -p $GITHUB_WORKSPACE/ui-project
           mkdir -p $GITHUB_WORKSPACE/core-source
+          # 物理隔离克隆，防止文件夹名嵌套导致路径丢失
           git clone https://github.com/SagerNet/sing-box-for-apple.git $GITHUB_WORKSPACE/ui-project
-          # Clone 1.12.14 into a specific, known folder name
           git clone --branch v1.12.14 --depth 1 https://github.com/SagerNet/sing-box.git $GITHUB_WORKSPACE/core-source/singbox
 
-      # 4. 🔴 Core Compilation: Use Absolute Root with Go Module context
+      # 4. 🔴 核心编译：进入包含 go.mod 的物理绝对根目录
       - name: Build Core Framework (1.12.14 Native)
         run: |
           go install github.com/sagernet/gomobile/cmd/gomobile@latest
@@ -36,23 +36,23 @@ jobs:
           echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
           $(go env GOPATH)/bin/gomobile init
           
-          # Move to the absolute root where go.mod exists
+          # 🟢 关键：进入物理绝对路径，确保模块上下文正确
           cd $GITHUB_WORKSPACE/core-source/singbox
           
-          # Use official 1.12.x internal build script (avoids Bind Type Errors)
+          # 🟢 关键：调用 1.12.x 官方内部构建脚本，避开 Bind Type Error
           go run ./cmd/apple framework -v
           
-          # Physically move the framework to the UI project's search path
+          # 🟢 搬运成果到 UI 项目预定坑位
           mkdir -p $GITHUB_WORKSPACE/ui-project/Library/sing-box
           cp -rf *.xcframework $GITHUB_WORKSPACE/ui-project/Library/sing-box/
 
-      # 5. 🟢 Final Xcode Synthesis (Bypasses problematic shell scripts)
+      # 5. 🟢 最终 Xcode 合成 (不使用有问题的 shell 脚本)
       - name: Final Xcode Synthesis
         run: |
           cd $GITHUB_WORKSPACE/ui-project
-          # Strip disruptive extensions for a pure main app build
+          # 彻底清除干扰项
           rm -rf Extension IntentsExtension WidgetExtension TVExtension
-          # Build unsigned IPA using absolute search paths
+          # 强行构建无签名 IPA
           xcodebuild -project sing-box.xcodeproj \
                      -scheme SFI \
                      -configuration Release \
@@ -62,7 +62,7 @@ jobs:
                      FRAMEWORK_SEARCH_PATHS="$(pwd)/Library/sing-box" \
                      clean archive -archivePath build/sing-box.xcarchive
 
-      # 6. 🟢 Export IPA for TrollStore
+      # 6. 🟢 导出 IPA
       - name: Export for TrollStore
         run: |
           mkdir -p Payload

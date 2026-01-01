@@ -1,11 +1,12 @@
-name: Build SingBox 1.12.14 Final Victory
+name: Build SingBox 1.12.14 Ultimate (Final Pass)
 on: workflow_dispatch
 
 jobs:
   build:
-    # 🔴 使用 macos-15 以确保环境最新
+    # 🔴 关键：必须使用 macOS 15 以支持 Xcode 16 项目格式
     runs-on: macos-15
     steps:
+      # 1. 🟢 强行对位 Java 17 (彻底杀掉 FATAL 报错)
       - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
@@ -16,15 +17,16 @@ jobs:
         with:
           go-version: '1.23'
 
-      # 🟢 核心修复：UI 和 内核全部锁定到 1.12.14 发布时的状态，防止最新代码的签名坑
-      - name: Clone Version-Matched Source
+      # 2. 🟢 核心修复：拉取稳定版 UI 和 1.12.14 稳定版内核
+      - name: Clone Clean Source
         run: |
-          # 克隆 1.12.14 版本对应的 UI 源码
-          git clone --branch v1.12.14 --recursive --depth 1 https://github.com/SagerNet/sing-box-for-apple.git ui-project
-          # 克隆 1.12.14 内核源码
+          # 拉取 UI 主分支
+          git clone --recursive --depth 1 https://github.com/SagerNet/sing-box-for-apple.git ui-project
+          # 拉取 1.12.14 内核标签
           git clone --branch v1.12.14 --depth 1 https://github.com/SagerNet/sing-box.git core-project
 
-      - name: Build 1.12.14 Core
+      # 3. 🟢 编译内核零件 (1.12.14 稳定版)
+      - name: Build Core Framework
         run: |
           go install github.com/sagernet/gomobile/cmd/gomobile@latest
           go install github.com/sagernet/gomobile/cmd/gobind@latest
@@ -32,25 +34,30 @@ jobs:
           $(go env GOPATH)/bin/gomobile init
           
           cd core-project
-          # 现场磨制零件
+          # 直接对根模块进行 bind 操作，生成 1.12.14 核心零件
           gomobile bind -v -target ios ./
           
-          # 根据不同版本 UI 的需求，同时生成两个名称的零件以防万一
+          # 🔴 物理对位：强行命名为 Xcode 期待的名称，并塞进 UI 项目
+          ORIGINAL_FRAMEWORK=$(find . -name "*.xcframework" | head -n 1)
+          cp -rf "$ORIGINAL_FRAMEWORK" ../ui-project/Libbox.xcframework
+          
           mkdir -p ../ui-project/Library/sing-box
-          cp -rf *.xcframework ../ui-project/Library/sing-box/
-          cp -rf *.xcframework ../ui-project/Libbox.xcframework
+          cp -rf "$ORIGINAL_FRAMEWORK" ../ui-project/Library/sing-box/
 
-      - name: Clean Xcode Projects
+      # 4. 🔴 关键修复：彻底剥离会导致 Exit code 65 的签名组件
+      - name: Purge Disruptive Extensions
         run: |
           cd ui-project
-          # 彻底移除所有需要证书权限的非核心扩展
+          # 强行移除所有会导致签名报错的插件
           rm -rf Extension IntentsExtension WidgetExtension TVExtension FileProviderExtension Shared
+          # 强制预解析 Swift 依赖
           xcodebuild -resolvePackageDependencies
 
-      - name: Final Xcode Synthesis
+      # 5. 🟢 Xcode 最终合成 (无签名/纯净模式)
+      - name: Xcode Synthesis
         run: |
           cd ui-project
-          # 使用最纯净的 SFI 方案编译
+          # 使用纯净模式编译 SFI 主方案，禁用所有自动签名和组件链接
           xcodebuild -project sing-box.xcodeproj \
                      -scheme SFI \
                      -configuration Release \
@@ -62,6 +69,7 @@ jobs:
                      GCC_PREPROCESSOR_DEFINITIONS='$GCC_PREPROCESSOR_DEFINITIONS SFI_MAIN_ONLY=1' \
                      clean archive -archivePath build/sing-box.xcarchive
 
+      # 6. 🟢 产出成品 IPA
       - name: Export IPA
         run: |
           mkdir -p Payload

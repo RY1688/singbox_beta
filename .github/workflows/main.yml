@@ -1,4 +1,4 @@
-name: Build SingBox 1.12.14 Final Victory (Library Mode)
+name: Build SingBox 1.12.14 Victory-Final
 on: workflow_dispatch
 
 jobs:
@@ -15,14 +15,14 @@ jobs:
         with:
           go-version: '1.22'
 
-      # 1. 🟢 克隆 1.12.14 核心与 UI
+      # 1. 🟢 镜像对位克隆
       - name: Clone Sources
         run: |
           git clone --recursive --depth 1 https://github.com/SagerNet/sing-box-for-apple.git ui-src
           git clone --branch v1.12.14 --depth 1 https://github.com/SagerNet/sing-box.git core-src
 
-      # 2. 🟢 编译内核并按照你手机里的名称“Library”命名
-      - name: Build Core (Library Mode)
+      # 2. 🟢 按照手机样本编译 Library (静态链接对位)
+      - name: Build Core (Library Match)
         run: |
           go install github.com/sagernet/gomobile/cmd/gomobile@latest
           go install github.com/sagernet/gomobile/cmd/gobind@latest
@@ -30,40 +30,34 @@ jobs:
           $(go env GOPATH)/bin/gomobile init
           
           cd core-src
-          # 编译 1.12.14 核心逻辑
-          go run ./cmd/apple framework -v
+          # 🔴 核心对位：按照你提供的二进制指纹，执行 Library 模式编译
+          gomobile bind -v -target ios -o Library.xcframework ./
           
-          # 🔴 核心修复：强行命名为 Library.xcframework 以对位你提供的 Library 二进制
-          ORIGINAL_FRAMEWORK=$(find . -name "*.xcframework" | head -n 1)
-          cp -rf "$ORIGINAL_FRAMEWORK" ../ui-src/Library.xcframework
-          
-          # 物理同步到所有可能被引用到的路径
+          # 🔴 强制物理对位：确保零件出现在 Xcode 期待的所有位置
+          cp -rf Library.xcframework ../ui-src/
           mkdir -p ../ui-src/Library/sing-box
-          cp -rf "$ORIGINAL_FRAMEWORK" ../ui-src/Library/sing-box/
-          cp -rf "$ORIGINAL_FRAMEWORK" ../ui-src/Libbox.xcframework
+          cp -rf Library.xcframework ../ui-src/Library/sing-box/
+          cp -rf Library.xcframework ../ui-src/Libbox.xcframework
 
-      # 3. 🔴 绝杀：手术级修改项目工程，彻底根除 Code 65
-      - name: Hard-Purge & Re-Link
+      # 3. 🔴 绝杀：暴力修改 project.pbxproj 抹除所有插件 Target
+      - name: Hard-Fix Project
         run: |
           cd ui-src
-          # 1. 物理删除所有会导致签名报错的插件文件夹
+          # 物理删除
           rm -rf Extension IntentsExtension WidgetExtension TVExtension FileProviderExtension Shared
           
-          # 2. 强制抹除工程文件中关于这些插件的所有引用和编译目标
-          # 使用更彻底的正则表达式匹配删除
-          sed -i '' '/"Extension"/d' sing-box.xcodeproj/project.pbxproj
-          sed -i '' '/"Widget"/d' sing-box.xcodeproj/project.pbxproj
-          sed -i '' '/"Intents"/d' sing-box.xcodeproj/project.pbxproj
-          sed -i '' '/"FileProvider"/d' sing-box.xcodeproj/project.pbxproj
+          # 🔴 核心修复：直接从工程定义中抹除所有包含 Extension 的行，让 Xcode 彻底“失忆”
+          sed -i '' '/Extension/d' sing-box.xcodeproj/project.pbxproj
+          sed -i '' '/Widget/d' sing-box.xcodeproj/project.pbxproj
           
-          # 3. 解析依赖
+          # 强制更新 Swift 依赖包
           xcodebuild -resolvePackageDependencies
 
-      # 4. 🟢 最终合成 (无签名/纯净核心模式)
+      # 4. 🟢 Xcode 最终合成 (无签名/核心模式)
       - name: Xcode Synthesis
         run: |
           cd ui-src
-          # 按照官方成功流逻辑，锁定单主程序方案
+          # 🔴 关键：使用 -allowProvisioningUpdates 之外的纯净模式
           xcodebuild -project sing-box.xcodeproj \
                      -scheme SFI \
                      -configuration Release \
@@ -72,18 +66,20 @@ jobs:
                      CODE_SIGNING_REQUIRED=NO \
                      CODE_SIGN_IDENTITY="" \
                      CODE_SIGN_ENTITLEMENTS="" \
+                     AD_HOC_CODE_SIGNING_ALLOWED=YES \
                      GCC_PREPROCESSOR_DEFINITIONS='$GCC_PREPROCESSOR_DEFINITIONS SFI_MAIN_ONLY=1' \
                      clean archive -archivePath build/sing-box.xcarchive
 
-      # 5. 🟢 产出 IPA (TrollStore 专用)
-      - name: Export Final Result
+      # 5. 🟢 产出 IPA (TrollStore 专用封装)
+      - name: Export Final IPA
         run: |
           mkdir -p Payload
+          # 寻找编译好的主程序 .app 文件
           APP_PATH=$(find ui-src/build/sing-box.xcarchive -name "*.app" | head -n 1)
           cp -rp "$APP_PATH" Payload/
           zip -r sing-box-1.12.14-victory.ipa Payload/
 
-      - name: Upload Finished Result
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: SingBox-Match-Result

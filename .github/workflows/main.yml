@@ -5,7 +5,7 @@ jobs:
   build:
     runs-on: macos-14
     steps:
-      # 1. 🟢 强行对位 Java 17 (解决 FATAL 报错)
+      # 1. 🟢 环境强制对位 (Java 17 是 gomobile 的命门)
       - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
@@ -17,13 +17,13 @@ jobs:
         with:
           go-version: '1.23'
 
-      # 2. 🟢 纯净克隆：直接克隆到根目录，不设子文件夹
+      # 2. 🟢 纯净克隆：获取 1.12.14 稳定版源码
       - name: Clone Clean Source
         run: |
           git clone https://github.com/SagerNet/sing-box-for-apple.git ui-project
           git clone --branch v1.12.14 --depth 1 https://github.com/SagerNet/sing-box.git core-project
 
-      # 3. 🔴 绝杀：地毯式搜索编译入口
+      # 3. 🔴 绝杀：使用 gomobile 标准 bind 模式 (避开路径依赖)
       - name: Build Core Framework
         run: |
           go install github.com/sagernet/gomobile/cmd/gomobile@latest
@@ -31,28 +31,24 @@ jobs:
           echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
           $(go env GOPATH)/bin/gomobile init
           
-          # 🟢 不再手动指定 cd 路径，而是让 find 去抓取真正的 cmd/apple 位置
-          REAL_PATH=$(find $(pwd)/core-project -name "apple" -type d | grep "cmd/apple" | head -n 1)
-          echo "找到了真实路径: $REAL_PATH"
+          # 🟢 关键：进入源码根目录，直接对模块进行 bind 操作
+          cd core-project
           
-          if [ -z "$REAL_PATH" ]; then
-            echo "错误：全盘搜索也没找到 cmd/apple，请检查源码是否完整！"
-            exit 1
-          fi
+          # 🔴 核心修复：1.12.x 版本不再去 cmd/apple，直接 bind 根模块
+          # 这会生成一个包含 1.12.14 所有核心功能的 .xcframework
+          gomobile bind -v -target ios ./
           
-          cd "$REAL_PATH"
-          # 现场编译 1.12.14 内核
-          go run . framework -v
-          
-          # 搬运成果
+          # 搬运成果到 UI 项目
           mkdir -p $GITHUB_WORKSPACE/ui-project/Library/sing-box
-          cp -rf *.xcframework $GITHUB_WORKSPACE/ui-project/Library/sing-box/
+          find . -name "*.xcframework" -exec cp -rf {} $GITHUB_WORKSPACE/ui-project/Library/sing-box/ \;
 
       # 4. 🟢 Xcode 最终合成
       - name: Xcode Synthesis
         run: |
           cd ui-project
+          # 剔除干扰项，确保纯净编译
           rm -rf Extension IntentsExtension WidgetExtension TVExtension
+          
           xcodebuild -project sing-box.xcodeproj \
                      -scheme SFI \
                      -configuration Release \

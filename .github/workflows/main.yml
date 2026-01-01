@@ -1,11 +1,11 @@
-name: Build SingBox 1.12.14 (Final Pure IPA)
+name: Build SingBox 1.12.14 Final Victory
 on: workflow_dispatch
 
 jobs:
   build:
     runs-on: macos-15
     steps:
-      # 1. 🟢 环境强制对位 (Java 17 & Go)
+      # 1. 🟢 环境强制对位
       - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
@@ -16,13 +16,13 @@ jobs:
         with:
           go-version: '1.23'
 
-      # 2. 🟢 完整克隆：包含所有插件代码
+      # 2. 🟢 完整递归克隆
       - name: Clone Clean Source
         run: |
           git clone --recursive https://github.com/SagerNet/sing-box-for-apple.git ui-project
           git clone --branch v1.12.14 --depth 1 https://github.com/SagerNet/sing-box.git core-project
 
-      # 3. 🟢 编译 1.12.14 内核框架 (这一步你已经稳赢了)
+      # 3. 🟢 编译 1.12.14 内核框架
       - name: Build Core Framework
         run: |
           go install github.com/sagernet/gomobile/cmd/gomobile@latest
@@ -31,25 +31,30 @@ jobs:
           $(go env GOPATH)/bin/gomobile init
           
           cd core-project
+          # 生成零件
           gomobile bind -v -target ios ./
           
-          mkdir -p $GITHUB_WORKSPACE/ui-project/Library/sing-box
-          cp -rf *.xcframework $GITHUB_WORKSPACE/ui-project/Library/sing-box/
+          # 🔴 核心修复：根据报错信息，强行更名为 Xcode 期待的 Libbox.xcframework
+          ORIGINAL_FRAMEWORK=$(find . -name "*.xcframework" | head -n 1)
+          cp -rf "$ORIGINAL_FRAMEWORK" ../ui-project/Libbox.xcframework
+          
+          # 同时保留一份在 Library 下备用
+          mkdir -p ../ui-project/Library/sing-box
+          cp -rf "$ORIGINAL_FRAMEWORK" ../ui-project/Library/sing-box/
 
-      # 4. 🔴 关键修复：手术级剥离干扰组件 (彻底解决 Exit code 65)
+      # 4. 🔴 关键修复：手术级剥离干扰组件
       - name: Purge Disruptive Extensions
         run: |
           cd ui-project
-          # 彻底移除所有需要证书权限的“累赘”插件
+          # 彻底移除所有需要证书权限的“累赘”插件，解决 Exit code 65
           rm -rf Extension IntentsExtension WidgetExtension TVExtension FileProviderExtension Shared
-          # 强制预解析所有依赖
+          # 强制预解析依赖
           xcodebuild -resolvePackageDependencies
 
-      # 5. 🟢 Xcode 16 最终合成 (只编译主 App 方案)
+      # 5. 🟢 Xcode 最终合成 (无签名模式)
       - name: Xcode Synthesis
         run: |
           cd ui-project
-          # 使用纯净模式，禁用所有自动签名和额外插件链接
           xcodebuild -project sing-box.xcodeproj \
                      -scheme SFI \
                      -configuration Release \
@@ -59,14 +64,12 @@ jobs:
                      CODE_SIGN_IDENTITY="" \
                      CODE_SIGN_ENTITLEMENTS="" \
                      GCC_PREPROCESSOR_DEFINITIONS='$GCC_PREPROCESSOR_DEFINITIONS SFI_MAIN_ONLY=1' \
-                     FRAMEWORK_SEARCH_PATHS="$(pwd)/Library/sing-box" \
                      clean archive -archivePath build/sing-box.xcarchive
 
-      # 6. 🟢 导出成品 IPA
+      # 6. 🟢 产出成品 IPA
       - name: Export for TrollStore
         run: |
           mkdir -p Payload
-          # 寻找编译好的主程序 .app 文件
           APP_PATH=$(find ui-project/build/sing-box.xcarchive -name "*.app" | head -n 1)
           cp -rp "$APP_PATH" Payload/
           zip -r sing-box-1.12.14-stable.ipa Payload/
